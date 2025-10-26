@@ -15,7 +15,7 @@ const client = new MongoClient(uri, {
   serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
 });
 
-let volunteerCollection, requestsCollection, feedbackCollection;
+let volunteerCollection, requestsCollection, feedbackCollection, usersCollection;
 
 async function run() {
   try {
@@ -23,6 +23,7 @@ async function run() {
     volunteerCollection = db.collection("volunteers");
     requestsCollection = db.collection("volunteerRequests");
     feedbackCollection = db.collection("feedbacks");
+    usersCollection = db.collection("users"); // For user profiles
 
     // ---------------- Volunteer APIs ----------------
     app.get('/volunteers', async (req, res) => {
@@ -132,7 +133,6 @@ async function run() {
     });
 
     // ---------------- Notifications API ----------------
-    // Get upcoming events for a volunteer (next 7 days)
     app.get('/notifications', async (req, res) => {
       const email = req.query.email;
       if (!email) return res.status(400).send({ error: 'Email is required' });
@@ -169,7 +169,57 @@ async function run() {
       }
     });
 
-    // ---------------- Root Test ----------------
+    // ---------------- Volunteer History & Profile ----------------
+    app.get('/history', async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send({ error: 'Email is required' });
+
+      try {
+        const myRequests = await requestsCollection.find({ volunteerEmail: email }).toArray();
+        const history = [];
+
+        for (let req of myRequests) {
+          const post = await volunteerCollection.findOne({ _id: new ObjectId(req.volunteerPostId) });
+          if (!post) continue;
+
+          const feedback = await feedbackCollection.findOne({
+            volunteerPostId: req.volunteerPostId,
+            volunteerEmail: email,
+          });
+
+          history.push({
+            postTitle: post.postTitle,
+            date: post.deadline,
+            hours: post.volunteerHours || 0,
+            feedback: feedback ? feedback.feedback : null,
+            rating: feedback ? feedback.rating : null,
+            organizer: post.organizerName,
+          });
+        }
+
+        res.send(history);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: 'Server error' });
+      }
+    });
+
+    app.get('/profile', async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send({ error: 'Email is required' });
+
+      try {
+        const user = await usersCollection.findOne({ email });
+        if (!user) return res.status(404).send({ error: 'User not found' });
+        res.send(user);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: 'Server error' });
+      }
+    });
+
+
+    // ---------------- Root ----------------
     app.get('/', (req, res) => res.send('Volunteerly Server Running'));
 
     // ---------------- Start Server ----------------
