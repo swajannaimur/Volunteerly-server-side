@@ -1,167 +1,185 @@
-require('dotenv').config()
-const express = require('express')
-const app = express()
-const cors = require('cors')
-const port = 3000
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
-// middleware
-app.use(cors())
-app.use(express.json())
+const app = express();
+const port = process.env.PORT || 3000;
 
+app.use(cors());
+app.use(express.json());
+
+// MongoDB connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@swajan48.9pzqlth.mongodb.net/?retryWrites=true&w=majority&appName=Swajan48`;
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
-    serverApi: {
-        version: ServerApiVersion.v1,
-        strict: true,
-        deprecationErrors: true,
-    }
+  serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
 });
 
+let volunteerCollection, requestsCollection, feedbackCollection;
+
 async function run() {
-    try {
-        // Connect the client to the server	(optional starting in v4.7)
-        // await client.connect();
+  try {
+    const db = client.db("volunteerDb");
+    volunteerCollection = db.collection("volunteers");
+    requestsCollection = db.collection("volunteerRequests");
+    feedbackCollection = db.collection("feedbacks");
 
-        const volunteerCollections = client.db("volunteerDb").collection("volunteers");
-        const requestsCollection = client.db("volunteerDb").collection("volunteerRequests");
+    // ---------------- Volunteer APIs ----------------
+    app.get('/volunteers', async (req, res) => {
+      const search = req.query.search || '';
+      const email = req.query.email;
+      let query = {};
+      if (search) query.postTitle = { $regex: search, $options: 'i' };
+      if (email) query.organizerEmail = email;
+      const result = await volunteerCollection.find(query).toArray();
+      res.send(result);
+    });
 
-        //Volunteer API
-        app.get('/volunteers', async (req, res) => {
-            const search = req.query.search || '';
-            const email = req.query.email;
-            
-            console.log('hello brother', req.headers);
-            let query = {};
+    app.get('/volunteers/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await volunteerCollection.findOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
 
-            if (search) {
-                query.postTitle = { $regex: search, $options: 'i' };
-            }
+    app.post('/volunteers', async (req, res) => {
+      const data = req.body;
+      if (data.deadline) data.deadline = new Date(data.deadline);
+      const result = await volunteerCollection.insertOne(data);
+      res.send(result);
+    });
 
-            if (email) {
-                query.organizerEmail = email;
-            }
+    app.put('/volunteers/:id', async (req, res) => {
+      const id = req.params.id;
+      const updatedData = req.body;
+      if (updatedData.deadline) updatedData.deadline = new Date(updatedData.deadline);
+      const result = await volunteerCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updatedData }
+      );
+      res.send(result);
+    });
 
-            const result = await volunteerCollections.find(query).toArray();
-            res.send(result);
+    app.delete('/volunteers/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await volunteerCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+    // ---------------- Requests APIs ----------------
+    app.get('/requests', async (req, res) => {
+      const result = await requestsCollection.find().toArray();
+      res.send(result);
+    });
+
+    app.get('/requests/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await requestsCollection.findOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+    app.get('/myRequests', async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send({ error: "Email is required" });
+      const result = await requestsCollection.find({ volunteerEmail: email }).toArray();
+      res.send(result);
+    });
+
+    app.post('/requests', async (req, res) => {
+      const data = req.body;
+      const insertResult = await requestsCollection.insertOne(data);
+
+      // Decrease volunteersNeeded by 1
+      await volunteerCollection.updateOne(
+        { _id: new ObjectId(data.volunteerPostId) },
+        { $inc: { volunteersNeeded: -1 } }
+      );
+
+      res.send({ insertResult });
+    });
+
+    app.delete('/requests/:id', async (req, res) => {
+      const id = req.params.id;
+      const result = await requestsCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+    // ---------------- Feedback APIs ----------------
+    app.post('/feedbacks', async (req, res) => {
+      try {
+        const { volunteerPostId, volunteerName, volunteerEmail, feedback, rating } = req.body;
+        if (!volunteerPostId || !volunteerName || !volunteerEmail || !feedback || !rating)
+          return res.status(400).send({ error: 'Missing fields' });
+
+        const result = await feedbackCollection.insertOne({
+          volunteerPostId,
+          volunteerName,
+          volunteerEmail,
+          feedback,
+          rating: parseInt(rating),
+          createdAt: new Date(),
         });
+        res.send({ insertedId: result.insertedId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: 'Server error' });
+      }
+    });
 
-        app.get('/volunteers/upcoming', async (req, res) => {
-            const currentDate = new Date();
-            const result = await volunteerCollections
-                .find({ deadline: { $gte: currentDate } })
-                .sort({ deadline: 1 })
-                .limit(6)
-                .toArray();
-            res.send(result);
-        });
+    app.get('/feedbacks/:postId', async (req, res) => {
+      const postId = req.params.postId;
+      const result = await feedbackCollection.find({ volunteerPostId: postId }).toArray();
+      res.send(result);
+    });
 
-        app.get('/volunteers/:id', async (req, res) => {
-            const id = req.params.id
-            const query = { _id: new ObjectId(id) }
-            const result = await volunteerCollections.findOne(query)
-            res.send(result)
-        })
+    // ---------------- Notifications API ----------------
+    // Get upcoming events for a volunteer (next 7 days)
+    app.get('/notifications', async (req, res) => {
+      const email = req.query.email;
+      if (!email) return res.status(400).send({ error: 'Email is required' });
 
-        // my Volunteer need post
-        // app.get('/volunteers', async (req, res) => {
-        //     const email = req.query.email
+      try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const nextWeek = new Date();
+        nextWeek.setDate(today.getDate() + 7);
+        nextWeek.setHours(23, 59, 59, 999);
 
-        //     console.log('request headersasdasdasdasd');
+        const myRequests = await requestsCollection.find({ volunteerEmail: email }).toArray();
+        const notifications = [];
 
-        //     const query = {
-        //         organizerEmail: email
-        //     }
-        //     const result = await volunteerCollections.find(query).toArray()
-        //     res.send(result)
-        // });
+        for (let req of myRequests) {
+          const post = await volunteerCollection.findOne({ _id: new ObjectId(req.volunteerPostId) });
+          if (!post) continue;
 
-        app.post('/volunteers', async (req, res) => {
-            const data = req.body;
-            if (data.deadline) {
-                data.deadline = new Date(data.deadline);
-            }
-            const result = await volunteerCollections.insertOne(data);
-            res.send(result);
-        });
+          const deadline = new Date(post.deadline);
+          if (deadline >= today && deadline <= nextWeek) {
+            notifications.push({
+              postTitle: post.postTitle,
+              deadline: post.deadline,
+              location: post.location,
+              organizerName: post.organizerName,
+            });
+          }
+        }
 
-        app.put('/volunteers/:id', async (req, res) => {
-            const id = req.params.id
-            const updatedData = req.body;
-            if (updatedData.deadline) {
-                updatedData.deadline = new Date(updatedData.deadline)
-            }
-            const result = await volunteerCollections.updateOne(
-                { _id: new ObjectId(id) },
-                { $set: updatedData })
-            res.send(result)
-        })
+        res.send(notifications);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: 'Server error' });
+      }
+    });
 
-        app.delete('/volunteers/:id', async (req, res) => {
-            const id = req.params.id
-            const query = { _id: new ObjectId(id) }
-            const result = await volunteerCollections.deleteOne(query)
-            res.send(result)
-        })
+    // ---------------- Root Test ----------------
+    app.get('/', (req, res) => res.send('Volunteerly Server Running'));
 
-        // request api
-        app.get('/requests', async (req, res) => {
-            const result = await requestsCollection.find().toArray()
-            res.send(result)
-        })
+    // ---------------- Start Server ----------------
+    app.listen(port, () => {
+      console.log(`Server running on http://localhost:${port}`);
+    });
 
-        app.get('/requests/:id', async (req, res) => {
-            const id = req.params.id
-            const query = { _id: new ObjectId(id) }
-            const result = await requestsCollection.findOne(query)
-            res.send(result)
-        })
-
-        app.post('/requests', async (req, res) => {
-            const data = req.body;
-            const insertResult = await requestsCollection.insertOne(data);
-            const { volunteerPostId } = data;
-            const updateResult = await volunteerCollections.updateOne(
-                { _id: new ObjectId(volunteerPostId) },
-                { $inc: { volunteersNeeded: -1 } }
-            );
-            res.send({ insertResult, updateResult });
-        });
-
-        app.get('/myRequests', async (req, res) => {
-            const email = req.query.email
-            const query = {
-                volunteerEmail: email
-            }
-            const result = await requestsCollection.find(query).toArray()
-            res.send(result)
-        });
-
-        app.delete('/requests/:id', async (req, res) => {
-            const id = req.params.id
-            const query = { _id: new ObjectId(id) }
-            const result = await requestsCollection.deleteOne(query)
-            res.send(result)
-        })
-
-        // Send a ping to confirm a successful connection
-        // await client.db("admin").command({ ping: 1 });
-        // console.log("Pinged your deployment. You successfully connected to MongoDB!");
-    } finally {
-        // Ensures that the client will close when you finish/error
-        // await client.close();
-    }
+  } catch (err) {
+    console.error(err);
+  }
 }
+
 run().catch(console.dir);
-
-
-app.get('/', (req, res) => {
-    res.send('Hello World!')
-})
-
-
-app.listen(port, () => {
-    // console.log(`Example app listening on port ${port}`)
-})
