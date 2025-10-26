@@ -169,7 +169,7 @@ async function run() {
       }
     });
 
-    // ---------------- Volunteer History & Profile ----------------
+    // ---------------- Volunteer History ----------------
     app.get('/history', async (req, res) => {
       const email = req.query.email;
       if (!email) return res.status(400).send({ error: 'Email is required' });
@@ -194,6 +194,7 @@ async function run() {
             feedback: feedback ? feedback.feedback : null,
             rating: feedback ? feedback.rating : null,
             organizer: post.organizerName,
+            organizerEmail: post.organizerEmail, // added for profile link
           });
         }
 
@@ -203,21 +204,6 @@ async function run() {
         res.status(500).send({ error: 'Server error' });
       }
     });
-
-    app.get('/profile', async (req, res) => {
-      const email = req.query.email;
-      if (!email) return res.status(400).send({ error: 'Email is required' });
-
-      try {
-        const user = await usersCollection.findOne({ email });
-        if (!user) return res.status(404).send({ error: 'User not found' });
-        res.send(user);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: 'Server error' });
-      }
-    });
-
 
     // ---------------- Root ----------------
     app.get('/', (req, res) => res.send('Volunteerly Server Running'));
